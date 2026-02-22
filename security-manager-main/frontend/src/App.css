@@ -256,6 +256,13 @@ button:disabled {
     border: 1px solid rgba(245, 158, 11, 0.2);
 }
 
+.spinner-inline {
+    display: inline-block;
+    animation: reportSpin 1s linear infinite;
+    margin-left: 6px;
+    font-size: 1em;
+}
+
 .error-message {
     background-color: rgba(239, 68, 68, 0.1);
     color: #f87171;

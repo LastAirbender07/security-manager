@@ -129,9 +129,67 @@ def execute_scan(self, repo_url: str, **kwargs):
                 repo_config=config, 
                 pr_number=pr_number or 1,
                 commit_sha=commit_sha,
-                status="pending"
+                status="pending",
+                celery_task_id=self.request.id
             )
             
+            async def on_node_complete(state: dict):
+                # Check DB for cancellation mid-flight to gracefully abort if Cancel requested
+                db_scan = await ScanResult.get_or_none(id=scan.id)
+                if db_scan and db_scan.status == "cancelled":
+                    raise Exception("Scan was cancelled by the user")
+                
+                # Prevent overwriting a status change that happened during node execution
+                scan.status = db_scan.status if db_scan else scan.status
+
+                saved_count = state.get("_saved_log_count", 0)
+                current_logs = state.get("node_logs", [])
+                
+                for i in range(saved_count, len(current_logs)):
+                    log_entry = current_logs[i]
+                    await ScanLog.create(
+                        scan_result=scan,
+                        step=log_entry.get("step", "Unknown"),
+                        tokens_input=log_entry.get("tokens_input", 0),
+                        tokens_output=log_entry.get("tokens_output", 0),
+                        model_name=log_entry.get("model_name"),
+                        message=log_entry.get("message", "")
+                    )
+                state["_saved_log_count"] = len(current_logs)
+                
+                report_obj = {
+                    "scanner": {
+                        "vulnerabilities": state.get("scan_results", {}).get("vulnerabilities", []),
+                        "detected_libraries": state.get("scan_results", {}).get("detected_libraries", {}),
+                    },
+                    "ecosystem": state.get("ecosystem", {}),
+                    "analysis": state.get("analysis_results", []),
+                    "remediation": [
+                        {
+                            "path": fix.get("path", ""),
+                            "original_code": fix.get("original_code", "")[:3000],
+                            "fix_code": fix.get("fix_code", "")[:3000],
+                            "test_code": fix.get("test_code", "")[:2000],
+                            "type": fix.get("type", ""),
+                        }
+                        for fix in state.get("remediation_plan", [])
+                    ],
+                    "verification": [
+                        {
+                            "path": fix.get("path", ""),
+                            "verified": fix.get("verified", False),
+                            "error": fix.get("error", "")[:500] if fix.get("error") else None,
+                        }
+                        for fix in state.get("verified_fixes", [])
+                    ],
+                    "report": state.get("final_report", {}),
+                }
+                
+                scan.report_data = report_obj
+                scan.trivy_scan = state.get("scan_results", {})
+                scan.semgrep_scan = state.get("analysis_results", [])
+                await scan.save()
+
             flow = GuardianFlow()
             shared_state = {
                 "repo_url": repo_url,
@@ -144,6 +202,7 @@ def execute_scan(self, repo_url: str, **kwargs):
                 "github_token": github_token,
                 "token_usage": {"input": 0, "output": 0},
                 "node_logs": [],  # Per-node execution logs
+                "on_node_complete": on_node_complete,
             }
             
             # Run the flow
@@ -158,53 +217,13 @@ def execute_scan(self, repo_url: str, **kwargs):
                 print(f"DEBUG: node_logs[{i}] = {log}")
             print(f"{'='*50}\n")
             
+            # Ensure the final state is saved (in case any logs were added after the last completed node)
+            await on_node_complete(shared_state)
+            
             # Update ScanResult - FINISHED
             scan.status = "finished" 
-            scan.trivy_scan = shared_state.get("scan_results", {})
-            scan.semgrep_scan = shared_state.get("analysis_results", [])
-            
-            # Build full pipeline report
-            scan.report_data = {
-                "scanner": {
-                    "vulnerabilities": shared_state.get("scan_results", {}).get("vulnerabilities", []),
-                    "detected_libraries": shared_state.get("scan_results", {}).get("detected_libraries", {}),
-                },
-                "ecosystem": shared_state.get("ecosystem", {}),
-                "analysis": shared_state.get("analysis_results", []),
-                "remediation": [
-                    {
-                        "path": fix.get("path", ""),
-                        "original_code": fix.get("original_code", "")[:3000],
-                        "fix_code": fix.get("fix_code", "")[:3000],
-                        "test_code": fix.get("test_code", "")[:2000],
-                        "type": fix.get("type", ""),
-                    }
-                    for fix in shared_state.get("remediation_plan", [])
-                ],
-                "verification": [
-                    {
-                        "path": fix.get("path", ""),
-                        "verified": fix.get("verified", False),
-                        "error": fix.get("error", "")[:500] if fix.get("error") else None,
-                    }
-                    for fix in shared_state.get("verified_fixes", [])
-                ],
-                "report": shared_state.get("final_report", {}),
-            }
-            
             await scan.save()
             print(f"Scan {scan.id} finished successfully.")
-            
-            # Save per-node logs to DB
-            for log_entry in shared_state.get("node_logs", []):
-                await ScanLog.create(
-                    scan_result=scan,
-                    step=log_entry.get("step", "Unknown"),
-                    tokens_input=log_entry.get("tokens_input", 0),
-                    tokens_output=log_entry.get("tokens_output", 0),
-                    model_name=log_entry.get("model_name"),
-                    message=log_entry.get("message", "")
-                )
             
             # Determine finding counts for commit status
             vuln_count = len(shared_state.get("scan_results", {}).get("vulnerabilities", []))
@@ -222,11 +241,19 @@ def execute_scan(self, repo_url: str, **kwargs):
         except Exception as e:
             print(f"Scan failed: {e}")
             
-            # Crash-safe: only update scan if it was created
+            # Crash-safe: try to save partial state before marking as failed
             if scan:
                 try:
-                    scan.status = "failed"
-                    await scan.save()
+                    # Attempt to flush any pending logs/report data
+                    if 'shared_state' in locals():
+                        db_scan = await ScanResult.get_or_none(id=scan.id)
+                        if db_scan and db_scan.status == "cancelled":
+                            # Avoid flushing and definitely avoid setting to failed
+                            pass
+                        else:
+                            await on_node_complete(shared_state)
+                            scan.status = "failed"
+                            await scan.save()
                 except Exception as save_err:
                     print(f"Failed to update scan status: {save_err}")
             

@@ -9,7 +9,7 @@ export const ScanForm: React.FC = () => {
     const [webhookSecret, setWebhookSecret] = useState('');
     const [webhookSaved, setWebhookSaved] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
-    const [result, setResult] = useState<any>(null);
+    const [showSuccess, setShowSuccess] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
@@ -47,11 +47,14 @@ export const ScanForm: React.FC = () => {
 
         setLoading(true);
         setError(null);
-        setResult(null);
+        setShowSuccess(false);
 
         try {
-            const data = await triggerScan(repoUrl, targetUrl || undefined, githubToken || undefined);
-            setResult(data);
+            await triggerScan(repoUrl, targetUrl || undefined, githubToken || undefined);
+            setShowSuccess(true);
+            setRepoUrl('');
+            setTargetUrl('');
+            setTimeout(() => setShowSuccess(false), 5000);
         } catch (err: any) {
             setError(err.message || 'Failed to trigger scan');
         } finally {
@@ -152,10 +155,10 @@ export const ScanForm: React.FC = () => {
 
             {error && <p style={{ color: '#f87171', marginTop: '1rem' }}>{error}</p>}
 
-            {result && (
-                <div style={{ marginTop: '1rem', textAlign: 'left', background: '#2d2d2d', color: '#e0e0e0', padding: '1rem', borderRadius: '8px', border: '1px solid #404040' }}>
-                    <h3 style={{ margin: '0 0 0.5rem 0', color: '#34d399' }}>✓ Scan Queued</h3>
-                    <pre style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'pre-wrap' }}>{JSON.stringify(result, null, 2)}</pre>
+            {showSuccess && (
+                <div style={{ marginTop: '1rem', textAlign: 'left', background: 'rgba(16, 185, 129, 0.1)', color: '#34d399', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                    <h3 style={{ margin: '0 0 0.25rem 0', fontSize: '1rem' }}>✓ Scan Successfully Queued!</h3>
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: '#a0aec0' }}>The scan is now running in the background. Check the dashboard below for real-time updates.</p>
                 </div>
             )}
         </div>

@@ -13,11 +13,22 @@ export const ReportModal = ({ scanId, onClose }: ReportModalProps) => {
     const [expandedFix, setExpandedFix] = useState<number | null>(null);
     const [codeView, setCodeView] = useState<'before' | 'after'>('after');
 
+    const fetchReport = async (silent = false) => {
+        if (!silent) setLoading(true);
+        try {
+            const data = await getScanReport(scanId);
+            setReport(data);
+        } catch {
+            setReport(null);
+        } finally {
+            if (!silent) setLoading(false);
+        }
+    };
+
     useEffect(() => {
-        getScanReport(scanId)
-            .then((data) => setReport(data))
-            .catch(() => setReport(null))
-            .finally(() => setLoading(false));
+        fetchReport();
+        const interval = setInterval(() => fetchReport(true), 3000);
+        return () => clearInterval(interval);
     }, [scanId]);
 
     const r = report?.report || {};
@@ -138,6 +149,30 @@ export const ReportModal = ({ scanId, onClose }: ReportModalProps) => {
                         </div>
 
                         <div className="report-body">
+                            {/* Error / Cancellation Banner */}
+                            {(report.status.toLowerCase() === 'failed' || report.status.toLowerCase() === 'cancelled') && (
+                                <div style={{
+                                    background: 'rgba(220, 38, 38, 0.1)',
+                                    border: '1px solid rgba(220, 38, 38, 0.3)',
+                                    padding: '1rem',
+                                    borderRadius: '8px',
+                                    marginBottom: '1.5rem',
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                    gap: '1rem'
+                                }}>
+                                    <span style={{ fontSize: '1.5rem' }}>{report.status.toLowerCase() === 'cancelled' ? '🛑' : '🔥'}</span>
+                                    <div>
+                                        <h4 style={{ margin: '0 0 0.5rem 0', color: '#ef4444', textTransform: 'capitalize' }}>
+                                            Scan {report.status}
+                                        </h4>
+                                        <p style={{ margin: 0, color: '#fca5a5' }}>
+                                            {r.error || `The scan encountered a critical issue or was stopped manually. Partial results are displayed below.`}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* ─── OVERVIEW ─── */}
                             {activeTab === 'overview' && (
                                 <div className="report-section">

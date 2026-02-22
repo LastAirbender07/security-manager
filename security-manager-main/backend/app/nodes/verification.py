@@ -127,6 +127,7 @@ class VerificationNode(AsyncNode):
 
                 docker_cmd = [
                     "docker", "run", "--rm",
+                    "-u", f"{os.getuid()}:{os.getgid()}",
                     "-v", f"{mount_path}:/check",
                     "-w", "/check",
                     docker_image,

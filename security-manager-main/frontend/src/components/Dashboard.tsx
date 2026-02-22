@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getScans, getScanLogs, ScanResult, ScanLog } from '../api/client';
+import { getScans, getScanLogs, cancelScan, ScanResult, ScanLog } from '../api/client';
 import { ReportModal } from './ReportModal';
 
 export const Dashboard = () => {
@@ -11,16 +11,26 @@ export const Dashboard = () => {
     const [logsLoading, setLogsLoading] = useState(false);
     const [reportScanId, setReportScanId] = useState<number | null>(null);
 
-    const fetchScans = async () => {
-        setLoading(true);
-        setError(null);
+    const fetchScans = async (silent = false) => {
+        if (!silent) setLoading(true);
+        if (!silent) setError(null);
         try {
             const data = await getScans();
             setScans(data);
         } catch (err) {
-            setError('Failed to fetch scans');
+            if (!silent) setError('Failed to fetch scans');
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
+        }
+    };
+
+    const handleCancelScan = async (scanId: number) => {
+        try {
+            await cancelScan(scanId);
+            fetchScans(true);
+        } catch (err) {
+            console.error('Failed to cancel scan:', err);
+            alert('Failed to cancel scan');
         }
     };
 
@@ -37,6 +47,13 @@ export const Dashboard = () => {
         }
     };
 
+    const silentFetchTokenLogs = async (scanId: number) => {
+        try {
+            const logs = await getScanLogs(scanId);
+            setScanLogs(logs);
+        } catch (err) { }
+    };
+
     const closeModal = () => {
         setSelectedScanId(null);
         setScanLogs([]);
@@ -44,13 +61,22 @@ export const Dashboard = () => {
 
     useEffect(() => {
         fetchScans();
+        const interval = setInterval(() => fetchScans(true), 3000);
+        return () => clearInterval(interval);
     }, []);
+
+    useEffect(() => {
+        if (selectedScanId !== null) {
+            const interval = setInterval(() => silentFetchTokenLogs(selectedScanId), 3000);
+            return () => clearInterval(interval);
+        }
+    }, [selectedScanId]);
 
     return (
         <div className="dashboard-container">
             <div className="dashboard-header">
                 <h2>Scan History</h2>
-                <button onClick={fetchScans} disabled={loading}>
+                <button onClick={() => fetchScans()} disabled={loading}>
                     {loading ? 'Refreshing...' : 'Refresh'}
                 </button>
             </div>
@@ -81,7 +107,7 @@ export const Dashboard = () => {
                                     <td>{scan.repo}</td>
                                     <td>
                                         <span className={`status-badge status-${scan.status.toLowerCase()}`}>
-                                            {scan.status}
+                                            {scan.status} {scan.status.toLowerCase() === 'pending' && <span className="spinner-inline">↻</span>}
                                         </span>
                                     </td>
                                     <td>{new Date(scan.created_at).toLocaleString()}</td>
@@ -95,15 +121,26 @@ export const Dashboard = () => {
                                         </button>
                                     </td>
                                     <td>
-                                        {scan.status.toLowerCase() === 'finished' && (
+                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                             <button
                                                 className="report-btn"
                                                 onClick={() => setReportScanId(scan.id)}
-                                                title="View full pipeline report"
+                                                title="View pipeline report"
+                                                disabled={scan.status.toLowerCase() === 'queued'}
                                             >
                                                 📋 Report
                                             </button>
-                                        )}
+                                            {(scan.status.toLowerCase() === 'pending' || scan.status.toLowerCase() === 'queued') && (
+                                                <button
+                                                    className="cancel-btn"
+                                                    onClick={() => handleCancelScan(scan.id)}
+                                                    title="Cancel this running scan"
+                                                    style={{ background: '#dc2626', color: 'white', border: 'none', padding: '0.25rem 0.5rem', borderRadius: '4px', cursor: 'pointer' }}
+                                                >
+                                                    🛑 Cancel
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))

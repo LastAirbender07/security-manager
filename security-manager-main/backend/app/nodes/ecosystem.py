@@ -52,9 +52,17 @@ class EcosystemDetectionNode(AsyncNode):
         trivy_summary = self._extract_dependency_summary(trivy_raw)
         libraries_summary = self._format_libraries(detected_libraries)
 
-        # Need at least one source of info
+        # If no info, fallback gracefully instead of failing the whole pipeline
         if not trivy_summary.strip() and not libraries_summary.strip():
-            raise RuntimeError("Ecosystem: No dependency data from Trivy and no libraries detected from source. Cannot determine ecosystem.")
+            print("Ecosystem: No dependency data found. Falling back to generic alpine.")
+            return {
+                "language": "generic",
+                "docker_image": "alpine:latest",
+                "dep_install_cmd": "echo 'No dependencies to install'",
+                "syntax_cmd": ["echo", "'No syntax check'"],
+                "test_cmd": ["echo", "'No tests'"],
+                "_tokens": {"input": 0, "output": 0}
+            }
 
         gemini_key = os.getenv("GEMINI_API_KEY")
         if not gemini_key:

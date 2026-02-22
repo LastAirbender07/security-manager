@@ -17,6 +17,7 @@ class ScanResult(models.Model):
     pr_number = fields.IntField()
     commit_sha = fields.CharField(max_length=40)
     status = fields.CharField(max_length=20) # pending, clean, vulnerable, fixed, failed
+    celery_task_id = fields.CharField(max_length=255, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     
     # Findings stored as JSON

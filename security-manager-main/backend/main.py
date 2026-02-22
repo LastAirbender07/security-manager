@@ -123,6 +123,34 @@ async def get_scan_report(scan_id: int):
         "report": scan.report_data or {},
     }
 
+@app.post("/scans/{scan_id}/cancel")
+async def cancel_scan(scan_id: int):
+    """Cancels a running or queued scan."""
+    from app.models import ScanResult
+    scan = await ScanResult.get_or_none(id=scan_id)
+    
+    if not scan:
+        return {"error": "Scan not found"}
+        
+    if scan.status in ["finished", "failed", "cancelled"]:
+        return {"msg": f"Scan is already {scan.status}"}
+        
+    if scan.celery_task_id:
+        from worker import celery_app
+        # Revoke the task and terminate if it's already running
+        celery_app.control.revoke(scan.celery_task_id, terminate=True, signal="SIGKILL")
+        
+    scan.status = "cancelled"
+    
+    # Update report data to reflect the cancellation reason clearly
+    report = scan.report_data or {}
+    report["error"] = "Scan was cancelled by the user."
+    scan.report_data = report
+    
+    await scan.save()
+    return {"status": "cancelled", "scan_id": scan.id}
+
+
 
 # ─── Config Endpoints ───────────────────────────────────────────────
 
