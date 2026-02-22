@@ -82,7 +82,18 @@ class AsyncParallelBatchNode(AsyncNode,BatchNode):
 class AsyncFlow(Flow,AsyncNode):
     async def _orch_async(self,shared,params=None):
         curr,p,last_action =copy.copy(self.start_node),(params or {**self.params}),None
-        while curr: curr.set_params(p); last_action=await curr._run_async(shared) if isinstance(curr,AsyncNode) else curr._run(shared); curr=copy.copy(self.get_next_node(curr,last_action))
+        while curr: 
+            curr.set_params(p)
+            last_action=await curr._run_async(shared) if isinstance(curr,AsyncNode) else curr._run(shared)
+            
+            if "on_node_complete" in shared and callable(shared["on_node_complete"]):
+                import inspect
+                if inspect.iscoroutinefunction(shared["on_node_complete"]):
+                    await shared["on_node_complete"](shared)
+                else:
+                    shared["on_node_complete"](shared)
+                    
+            curr=copy.copy(self.get_next_node(curr,last_action))
         return last_action
     async def _run_async(self,shared): p=await self.prep_async(shared); o=await self._orch_async(shared); return await self.post_async(shared,p,o)
     async def post_async(self,shared,prep_res,exec_res): return exec_res

@@ -12,10 +12,17 @@ class ScannerNode(AsyncNode):
     async def exec_async(self, repo_path):
         results = {"vulnerabilities": [], "trivy_raw": {}, "detected_libraries": {}}
         
-        # SAST: Run Semgrep
+        # SAST: Run Semgrep with advanced security rules
         try:
             print(f"Scanner: Running Semgrep on {repo_path}...")
-            cmd = ["semgrep", "scan", "--config=auto", "--json", "--quiet", repo_path]
+            # Use specific rulesets to catch deep flaws, SQLi, CSRF, secrets, etc.
+            cmd = [
+                "semgrep", "scan",
+                "--config=p/default",
+                "--config=p/security-audit",
+                "--config=p/secrets",
+                "--json", "--quiet", repo_path
+            ]
             result = subprocess.run(cmd, capture_output=True, text=True)
             
             if result.returncode == 0:
@@ -38,10 +45,15 @@ class ScannerNode(AsyncNode):
         except Exception as e:
             print(f"Scanner Error (Semgrep): {e}")
 
-        # SCA: Run Trivy
+        # SCA: Run Trivy with extensive scanners
         try:
             print(f"Scanner: Running Trivy SCA on {repo_path}...")
-            cmd = ["trivy", "fs", "--format", "json", "--quiet", "--list-all-pkgs", repo_path]
+            cmd = [
+                "trivy", "fs",
+                "--scanners", "vuln,secret,misconfig",
+                "--format", "json",
+                "--quiet", "--list-all-pkgs", repo_path
+            ]
             result = subprocess.run(cmd, capture_output=True, text=True)
             
             if result.returncode == 0:

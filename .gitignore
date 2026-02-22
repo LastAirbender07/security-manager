@@ -1,3 +1,6 @@
 /security-manager-main/frontend/node_modules
 /tf-scripts/.terraform
 .env
+# do not track anything that starts with "verify-" on backend/
+# example: security-manager-main/backend/verify-h9jokv10
+verify-*

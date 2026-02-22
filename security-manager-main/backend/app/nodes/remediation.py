@@ -49,9 +49,16 @@ class RemediationNode(AsyncNode):
         for f in findings:
             findings_by_file[f['path']].append(f)
 
+        max_files = int(os.getenv("MAX_FILES_TO_REMEDIATE", "5"))
+        # Get only up to max_files keys to process
+        files_to_process = list(findings_by_file.keys())[:max_files]
+        if len(findings_by_file) > max_files:
+            print(f"Remediation: Capping remediation to {max_files} files out of {len(findings_by_file)} vulnerable files to prevent timeout.")
+
         fixes = []
         
-        for file_path, file_findings in findings_by_file.items():
+        for file_path in files_to_process:
+            file_findings = findings_by_file[file_path]
             full_path = os.path.join(repo_path, file_path)
             
             try:

@@ -44,6 +44,11 @@ export const getScans = async (): Promise<ScanResult[]> => {
     return response.data;
 };
 
+export const cancelScan = async (scanId: number) => {
+    const response = await apiClient.post(`/scans/${scanId}/cancel`);
+    return response.data;
+};
+
 export const getScanLogs = async (scanId: number): Promise<ScanLog[]> => {
     const response = await apiClient.get(`/scans/${scanId}/logs`);
     return response.data;
@@ -93,6 +98,7 @@ export interface ScanReport {
             verified_fixes: number;
             total_vulnerabilities: number;
         };
+        error?: string;
     };
 }
 
