@@ -1,0 +1,36 @@
+name: Scan PR for vulnerabilities, correct it and verify
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  PR-Reviewer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      # - name: Run tests
+      #   run: pytest
+      # - name: Run main.py
+      #   run: python backend/main.py
+
+      - name: Run Start All Script
+        run: ./start_all.sh
