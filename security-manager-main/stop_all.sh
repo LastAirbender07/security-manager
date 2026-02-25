@@ -20,7 +20,9 @@ echo ">>> [2/2] Wiping Backend..."
 cd "$PROJECT_ROOT/backend"
 echo "Cleaning Backend containers, volumes, images, and network..."
 docker-compose down -v --rmi all 2>/dev/null || true
-
+docker rm -f security-management-db-1 security-management-broker-1 security-management-backend-1 security-management-worker-1 2>/dev/null || true
+docker volume rm -f guardian-db-data zap-data zap-data-vol 2>/dev/null || true
+docker network rm backend_guardian-net 2>/dev/null || true
 
 echo ""
 echo "========================================"

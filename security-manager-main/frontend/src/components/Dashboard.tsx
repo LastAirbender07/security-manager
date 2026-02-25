@@ -10,6 +10,12 @@ export const Dashboard = () => {
     const [scanLogs, setScanLogs] = useState<ScanLog[]>([]);
     const [logsLoading, setLogsLoading] = useState(false);
     const [reportScanId, setReportScanId] = useState<number | null>(null);
+    const [currentTime, setCurrentTime] = useState(new Date());
+
+    useEffect(() => {
+        const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+        return () => clearInterval(timer);
+    }, []);
 
     const fetchScans = async (silent = false) => {
         if (!silent) setLoading(true);
@@ -72,6 +78,28 @@ export const Dashboard = () => {
         }
     }, [selectedScanId]);
 
+    const getDuration = (scan: ScanResult) => {
+        const start = new Date(scan.created_at).getTime();
+        const isRunning = scan.status.toLowerCase() === 'pending' || scan.status.toLowerCase() === 'queued';
+        let end = currentTime.getTime();
+
+        if (scan.ended_at) {
+            end = new Date(scan.ended_at).getTime();
+        } else if (!isRunning) {
+            end = start;
+        }
+
+        let seconds = Math.floor((end - start) / 1000);
+        if (seconds < 0) seconds = 0;
+
+        const hrs = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+    };
+
     return (
         <div className="dashboard-container">
             <div className="dashboard-header">
@@ -91,14 +119,16 @@ export const Dashboard = () => {
                             <th>Repository</th>
                             <th>Status</th>
                             <th>Created At</th>
+                            <th>Duration</th>
                             <th>Tokens</th>
                             <th>Report</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {scans.length === 0 ? (
                             <tr>
-                                <td colSpan={6} style={{ textAlign: 'center' }}>No scans found</td>
+                                <td colSpan={8} style={{ textAlign: 'center' }}>No scans found</td>
                             </tr>
                         ) : (
                             scans.map((scan) => (
@@ -111,6 +141,7 @@ export const Dashboard = () => {
                                         </span>
                                     </td>
                                     <td>{new Date(scan.created_at).toLocaleString()}</td>
+                                    <td style={{ fontFamily: 'monospace', fontWeight: 600, color: '#9ca3af' }}>{getDuration(scan)}</td>
                                     <td>
                                         <button
                                             className="token-link"
@@ -130,17 +161,21 @@ export const Dashboard = () => {
                                             >
                                                 📋 Report
                                             </button>
-                                            {(scan.status.toLowerCase() === 'pending' || scan.status.toLowerCase() === 'queued') && (
-                                                <button
-                                                    className="cancel-btn"
-                                                    onClick={() => handleCancelScan(scan.id)}
-                                                    title="Cancel this running scan"
-                                                    style={{ background: '#dc2626', color: 'white', border: 'none', padding: '0.25rem 0.5rem', borderRadius: '4px', cursor: 'pointer' }}
-                                                >
-                                                    🛑 Cancel
-                                                </button>
-                                            )}
                                         </div>
+                                    </td>
+                                    <td>
+                                        {(scan.status.toLowerCase() === 'pending' || scan.status.toLowerCase() === 'queued') && (
+                                            <button
+                                                className="btn-cancel-glossy"
+                                                onClick={() => handleCancelScan(scan.id)}
+                                                title="Cancel this running scan"
+                                                aria-label="Cancel scan"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                                    <rect x="6" y="6" width="12" height="12" rx="2" ry="2"></rect>
+                                                </svg>
+                                            </button>
+                                        )}
                                     </td>
                                 </tr>
                             ))

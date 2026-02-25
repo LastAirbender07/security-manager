@@ -19,6 +19,7 @@ class ScanResult(models.Model):
     status = fields.CharField(max_length=20) # pending, clean, vulnerable, fixed, failed
     celery_task_id = fields.CharField(max_length=255, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
+    ended_at = fields.DatetimeField(null=True)
     
     # Findings stored as JSON
     trivy_scan = fields.JSONField(default=list)

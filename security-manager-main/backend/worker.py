@@ -4,6 +4,7 @@ import requests
 import subprocess
 import tempfile
 import shutil
+from datetime import datetime, timezone
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
@@ -222,6 +223,7 @@ def execute_scan(self, repo_url: str, **kwargs):
             
             # Update ScanResult - FINISHED
             scan.status = "finished" 
+            scan.ended_at = datetime.now(timezone.utc)
             await scan.save()
             print(f"Scan {scan.id} finished successfully.")
             
@@ -239,7 +241,9 @@ def execute_scan(self, repo_url: str, **kwargs):
             return {"scan_id": scan.id, "status": "finished"}
             
         except Exception as e:
+            import traceback
             print(f"Scan failed: {e}")
+            traceback.print_exc()
             
             # Crash-safe: try to save partial state before marking as failed
             if scan:
@@ -253,6 +257,7 @@ def execute_scan(self, repo_url: str, **kwargs):
                         else:
                             await on_node_complete(shared_state)
                             scan.status = "failed"
+                            scan.ended_at = datetime.now(timezone.utc)
                             await scan.save()
                 except Exception as save_err:
                     print(f"Failed to update scan status: {save_err}")

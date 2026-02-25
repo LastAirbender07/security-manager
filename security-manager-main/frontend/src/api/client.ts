@@ -26,6 +26,7 @@ export interface ScanResult {
     repo: string;
     status: string;
     created_at: string;
+    ended_at?: string;
     tokens_used: number;
 }
 

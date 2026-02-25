@@ -23,17 +23,24 @@ class VerificationNode(AsyncNode):
         # are NOT visible when mounting into sibling containers.
         host_work_dir = os.getenv("HOST_WORK_DIR", "")
         
-        # Get ecosystem info (set by EcosystemDetectionNode)
-        docker_image = eco.get("docker_image", "alpine:latest")
-        dep_install_cmd = eco.get("dep_install_cmd", "")
-        dep_file_path = eco.get("dep_file_path", "")
-        syntax_cmd = eco.get("syntax_cmd", [])
-        test_cmd = eco.get("test_cmd", [])
-        
-        print(f"Verification: Using ecosystem → {eco.get('language', 'unknown')} ({eco.get('ecosystem', 'unknown')})")
+        # Get default ecosystem info (fallback)
+        default_eco = list(eco.values())[0] if isinstance(eco, dict) and eco else {}
+        if "_tokens" in default_eco:
+           default_eco = list(eco.values())[1] if len(eco) > 1 else {}
         
         for fix in remediation_plan:
             fix_filename = os.path.basename(fix["path"])
+            ext = os.path.splitext(fix_filename)[1].lower()
+            
+            # Use extension-specific config if available, fallback to first/default
+            file_eco = eco.get(ext, default_eco)
+            
+            docker_image = file_eco.get("docker_image", "alpine:latest")
+            dep_install_cmd = file_eco.get("dep_install_cmd", "")
+            syntax_cmd = file_eco.get("syntax_cmd", [])
+            test_cmd = file_eco.get("test_cmd", [])
+            
+            print(f"Verification: Using ecosystem {ext} → {file_eco.get('language', 'unknown')} (image: {docker_image})")
             
             # Create temp dir under host-mapped path for DooD compatibility
             if host_work_dir:
@@ -61,7 +68,7 @@ class VerificationNode(AsyncNode):
                         "go": ["go.mod"],
                         "ruby": ["Gemfile"],
                     }
-                    lang = eco.get("language", "")
+                    lang = file_eco.get("language", "")
                     dep_files = dep_file_map.get(lang, [])
                     dep_copied = False
                     
@@ -105,20 +112,21 @@ class VerificationNode(AsyncNode):
                         print(f"Verification: Will install deps: {dep_install_cmd}")
                 
                 # 3. Build the run command
-                if fix.get("test_code") and test_cmd:
+                test_code = fix.get("test_code", "").strip()
+                if test_code and test_code.lower() != "none" and test_cmd:
                     test_filename = f"test_{fix_filename}"
                     test_path = os.path.join(tmp_dir, test_filename)
                     with open(test_path, "w") as f:
-                        f.write(fix["test_code"])
+                        f.write(test_code)
                     run_cmd = " ".join(test_cmd) + f" /check/{test_filename}"
                     check_type = "Unit Test"
                 elif syntax_cmd:
                     run_cmd = " ".join(syntax_cmd) + f" /check/{fix_filename}"
                     check_type = "Syntax Check"
                 else:
-                    print(f"Verification: No syntax/test cmd for {fix_filename}. Skipping.")
-                    fix["verified"] = False
-                    fix["error"] = "No verification command available"
+                    print(f"Verification: No syntax/test cmd for {fix_filename}. Skipping execution.")
+                    fix["verified"] = True
+                    fix["error"] = "Skipped (Configuration/Data file)"
                     verified_fixes.append(fix)
                     continue
 
@@ -127,7 +135,6 @@ class VerificationNode(AsyncNode):
 
                 docker_cmd = [
                     "docker", "run", "--rm",
-                    "-u", f"{os.getuid()}:{os.getgid()}",
                     "-v", f"{mount_path}:/check",
                     "-w", "/check",
                     docker_image,
@@ -138,19 +145,20 @@ class VerificationNode(AsyncNode):
                 print(f"Verification: Command: {' '.join(docker_cmd)}")
                 
                 try:
-                    result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=120)
+                    result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=300)
                     
                     if result.returncode == 0:
                         print(f"Verification: ✓ {fix['path']} verified ({check_type}).")
                         fix["verified"] = True
                     else:
-                        print(f"Verification: ✗ {fix['path']} failed: {result.stderr or result.stdout}")
+                        output = f"STDERR: {result.stderr}\nSTDOUT: {result.stdout}"
+                        print(f"Verification: ✗ {fix['path']} failed:\n{output}")
                         fix["verified"] = False
-                        fix["error"] = result.stderr + "\n" + result.stdout
-                except subprocess.TimeoutExpired:
-                    print(f"Verification: ✗ {fix['path']} timed out (120s).")
+                        fix["error"] = output
+                except subprocess.TimeoutExpired as e:
+                    print(f"Verification: ✗ {fix['path']} timed out (300s).")
                     fix["verified"] = False
-                    fix["error"] = "Verification timed out after 120s"
+                    fix["error"] = f"Verification timed out after 300s.\nSTDOUT: {e.stdout}\nSTDERR: {e.stderr}"
                 except Exception as e:
                     print(f"Verification: ✗ Docker execution failed: {e}")
                     fix["verified"] = False

@@ -73,33 +73,51 @@ class RemediationNode(AsyncNode):
             # Construct Prompt
             import toons
 
-            # Construct Prompt Data for TOON
-            prompt_data = {
-                "role": "senior security engineer",
-                "task": "Fix security vulnerabilities and provide a verification test",
-                "issues": [{"line": f.get('line'), "msg": f.get('msg')} for f in file_findings],
-                "file_content": content,
-                "requirements": [
-                    "Return the FULLY CORRECTED file content.",
+            # Determine if this file needs tests based on extension
+            ext = os.path.splitext(file_path)[1].lower()
+            code_extensions = {".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rb", ".php", ".cs", ".cpp", ".c"}
+            needs_test = ext in code_extensions
+
+            reqs = [
+                "Return the FULLY CORRECTED file content.",
+            ]
+            
+            if needs_test:
+                reqs.extend([
                     "PROVIDE A STANDALONE UNIT TEST file to verify the fix works and the vulnerability is gone.",
                     "Use the following format EXACTLY:\n### FIX\n(The full corrected code here)\n### TEST\n(The full unit test code here)",
                     f"Ensure imports are correct. For the test, assume the fixed file is named '{os.path.basename(file_path)}' and is in the same directory.",
                     "CRITICAL FIX RULES:",
-                    "- Wrap ALL top-level execution code (e.g. init_db(), app.run(), main()) inside `if __name__ == '__main__':` so importing the module does NOT trigger side effects.",
-                    "- Ensure EVERY function is defined BEFORE it is called. If init_db() calls hash_password(), hash_password() must be defined above init_db().",
-                    "- Do NOT call any functions at module level outside of `if __name__ == '__main__':`.",
+                    "- If applicable to the language, ensure side effects form module imports are prevented (e.g., `if __name__ == '__main__':` in Python).",
+                    "- Ensure EVERY required function/dependency is defined or imported.",
                     "CRITICAL TEST RULES:",
                     "- Write BEHAVIORAL tests, NOT implementation-specific tests. Test WHAT the code does, not HOW it does it internally.",
                     "- NEVER assert on specific hash prefixes, output formats, or library-specific string patterns (e.g. do NOT check startswith('pbkdf2:') or startswith('$2b$')).",
                     "- Instead, test that: (1) the output is not plaintext, (2) the same input produces consistent output, (3) functions don't raise exceptions, (4) security-sensitive operations use the correct API.",
-                    "- The test file must ONLY use Python stdlib + modules that the fix code itself imports. Do NOT introduce new third-party dependencies in tests.",
-                    "- Every test must actually import and call functions from the fixed file.",
-                ]
+                    "- The test file must ONLY use the standard testing framework for this language + modules that the fix code itself imports. Do NOT introduce new third-party testing dependencies.",
+                    "- Every test must actually import and call functions from the fixed file."
+                ])
+            else:
+                reqs.extend([
+                    "Since this is a configuration, data, or text file, DO NOT generate a unit test.",
+                    "Use the following format EXACTLY:\n### FIX\n(The full corrected code here)\n### TEST\nNone",
+                    "CRITICAL FIX RULES:",
+                    "- Keep the original formatting and spacing exactly as it was.",
+                    "- Ensure valid syntax for the target file type."
+                ])
+
+            # Construct Prompt Data for TOON
+            prompt_data = {
+                "role": "senior security engineer",
+                "task": "Fix security vulnerabilities" + (" and provide a verification test" if needs_test else ""),
+                "issues": [{"line": f.get('line'), "msg": f.get('msg')} for f in file_findings],
+                "file_content": content,
+                "requirements": reqs
             }
 
             if previous_fixes:
                  # Find previous error for this file
-                 last_error = previous_fixes[-1].get("error", "Unknown error")
+                 last_error = next((f.get("error") for f in previous_fixes if f.get("path") == file_path), "Unknown error")
                  prompt_data["previous_attempt_error"] = last_error
                  prompt_data["instruction"] = "Fix the code to resolve the previous error."
 

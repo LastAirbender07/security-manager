@@ -34,7 +34,7 @@ docker run -d --name security-management-backend-1 \
   -e REDIS_URL=redis://security-management-broker-1:6379/0 \
   -e PYTHONPATH=/app \
   guardian-backend \
-  bash -c "aerich upgrade && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+  bash -c "aerich upgrade || aerich init-db && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
 echo "Starting Worker..."
 docker run -d --name security-management-worker-1 \
   --network backend_guardian-net \

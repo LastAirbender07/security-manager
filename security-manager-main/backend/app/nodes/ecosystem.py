@@ -14,18 +14,26 @@ TOON_PROMPT = """You are a DevOps expert. Based on the scan results below, deter
 {libraries_summary}
 
 ## Requirements
-Return ONLY a valid JSON object with these exact keys:
-- "language": primary programming language (e.g., "python", "javascript", "java", "go", "ruby")
-- "docker_image": smallest official Docker image for this language runtime (e.g., "python:3.11-alpine", "node:20-alpine")
-- "dep_install_cmd": shell command to install all dependencies inside /check directory. Use quiet/silent flags. Example: "cd /check && pip install -r requirements.txt -q"
-- "syntax_cmd": array of command parts to check syntax of a single file. Example: ["python", "-m", "py_compile"]
-- "test_cmd": array of command parts to run a single file. Example: ["python"]
+Return ONLY a valid JSON object where the KEYS are file extensions (e.g., ".py", ".js", ".tsx", ".env") and the VALUES are the sandbox configurations for that specific extension.
+For each extension, provide these exact keys:
+- "language": programming language (e.g., "python", "javascript", "typescript", "text")
+- "docker_image": smallest official Docker image for this runtime (e.g., "python:3.11-alpine", "node:20-alpine", "alpine:latest")
+- "dep_install_cmd": shell command to install dependencies inside /check directory. Use quiet flags. Example: "cd /check && pip install -r requirements.txt -q" (or empty string if not needed)
+- "syntax_cmd": array of command parts to check syntax. Example: ["python", "-m", "py_compile"]
+- "test_cmd": array of command parts to run the file. Example: ["python"]
+
+Example JSON format:
+{{
+  ".py": {{"language": "python", "docker_image": "python:3.11-alpine", "dep_install_cmd": "pip install -r requirements.txt -q", "syntax_cmd": ["python", "-m", "py_compile"], "test_cmd": ["python"]}},
+  ".tsx": {{"language": "typescript", "docker_image": "node:20-alpine", "dep_install_cmd": "npm install --no-audit --no-fund --ignore-scripts --silent", "syntax_cmd": ["npx", "tsc", "--noEmit"], "test_cmd": ["npx", "jest"]}},
+  ".env": {{"language": "text", "docker_image": "alpine:latest", "dep_install_cmd": "", "syntax_cmd": [], "test_cmd": []}}
+}}
 
 ## Rules
-- Pick the SMALLEST Alpine-based image when possible
+- Include configurations for all extensions present in the project based on the detected libraries.
+- For configuration files (YAML, JSON, ENV), provide a minimal generic alpine configuration with empty test commands.
 - The dep_install_cmd must work inside a Docker container with /check as the project root
 - Redirect stderr to /dev/null in dep_install_cmd to keep output clean
-- If multiple languages are detected, pick the PRIMARY one (most dependency files)
 - Return ONLY the JSON, no markdown, no explanation
 
 ## JSON Response:"""
@@ -56,11 +64,13 @@ class EcosystemDetectionNode(AsyncNode):
         if not trivy_summary.strip() and not libraries_summary.strip():
             print("Ecosystem: No dependency data found. Falling back to generic alpine.")
             return {
-                "language": "generic",
-                "docker_image": "alpine:latest",
-                "dep_install_cmd": "echo 'No dependencies to install'",
-                "syntax_cmd": ["echo", "'No syntax check'"],
-                "test_cmd": ["echo", "'No tests'"],
+                ".txt": {
+                    "language": "generic",
+                    "docker_image": "alpine:latest",
+                    "dep_install_cmd": "echo 'No dependencies to install'",
+                    "syntax_cmd": ["echo", "'No syntax check'"],
+                    "test_cmd": ["echo", "'No tests'"]
+                },
                 "_tokens": {"input": 0, "output": 0}
             }
 
@@ -103,14 +113,16 @@ class EcosystemDetectionNode(AsyncNode):
                 config = self._parse_ai_response(raw_text)
                 config["_tokens"] = {"input": input_tokens, "output": output_tokens}
 
-                print(f"Ecosystem: AI determined -> {config['language']}, image={config['docker_image']}")
+                print(f"Ecosystem: AI determined config for {len(config) - 1} extensions.")
                 return config
 
             except RuntimeError:
                 raise
             except Exception as e:
+                import traceback
                 last_error = e
                 print(f"Ecosystem: Attempt {attempt}/{MAX_RETRIES} failed: {e}")
+                traceback.print_exc()
                 if attempt < MAX_RETRIES:
                     wait = attempt * 2
                     print(f"Ecosystem: Retrying in {wait}s...")
@@ -148,27 +160,38 @@ class EcosystemDetectionNode(AsyncNode):
 
     def _parse_ai_response(self, raw_text):
         """Parse and validate the AI's JSON response."""
-        text = raw_text
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
+        text = raw_text.strip()
+        import re
+        # Extract json content if enclosed in markdown backticks
+        json_match = re.search(r'```(?:json)?(.*?)```', text, re.DOTALL | re.IGNORECASE)
+        if json_match:
+            text = json_match.group(1).strip()
+        else:
+            # Fallback cleanup just in case
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
 
         try:
             config = json.loads(text)
         except json.JSONDecodeError:
             raise RuntimeError(f"Ecosystem: Failed to parse AI response as JSON: {text[:200]}")
 
+        # Ensure all nested configs have the required lists
         required = ["language", "docker_image", "dep_install_cmd", "syntax_cmd", "test_cmd"]
-        for key in required:
-            if key not in config:
-                raise RuntimeError(f"Ecosystem: AI response missing required key '{key}'")
+        for ext, ext_cfg in config.items():
+            if not isinstance(ext_cfg, dict):
+                continue
+            for key in required:
+                if key not in ext_cfg:
+                    raise RuntimeError(f"Ecosystem: AI response for {ext} missing required key '{key}'")
 
-        if isinstance(config["syntax_cmd"], str):
-            config["syntax_cmd"] = config["syntax_cmd"].split()
-        if isinstance(config["test_cmd"], str):
-            config["test_cmd"] = config["test_cmd"].split()
+            if isinstance(ext_cfg["syntax_cmd"], str):
+                ext_cfg["syntax_cmd"] = ext_cfg["syntax_cmd"].split()
+            if isinstance(ext_cfg["test_cmd"], str):
+                ext_cfg["test_cmd"] = ext_cfg["test_cmd"].split()
 
         return config
 
@@ -179,15 +202,14 @@ class EcosystemDetectionNode(AsyncNode):
 
         tokens = exec_res.pop("_tokens", {"input": 0, "output": 0})
 
-        lang = exec_res.get("language", "unknown")
-        image = exec_res.get("docker_image", "unknown")
+        lang_count = len([k for k in exec_res.keys() if k.startswith('.')])
         shared.setdefault("node_logs", []).append({
             "step": "Ecosystem Detection",
             "tokens_input": tokens["input"],
             "tokens_output": tokens["output"],
             "model_name": "gemini-2.5-flash",
-            "message": f"AI-detected: {lang}, image={image}"
+            "message": f"AI-detected {lang_count} languages/configs"
         })
 
-        print(f"Ecosystem: Set -> language={lang}, image={image}")
+        print(f"Ecosystem: Discovered configurations for {lang_count} extensions.")
         return "default"

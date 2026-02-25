@@ -7,6 +7,7 @@ import os
 import hmac
 import hashlib
 import json
+from datetime import datetime, timezone
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgres://guardian:password@db:5432/security_guardian")
 
@@ -84,6 +85,7 @@ async def list_scans():
             "repo": s.repo_config.url,
             "status": s.status,
             "created_at": s.created_at,
+            "ended_at": s.ended_at,
             "tokens_used": tokens_input + tokens_output,
         })
     return results
@@ -141,6 +143,7 @@ async def cancel_scan(scan_id: int):
         celery_app.control.revoke(scan.celery_task_id, terminate=True, signal="SIGKILL")
         
     scan.status = "cancelled"
+    scan.ended_at = datetime.now(timezone.utc)
     
     # Update report data to reflect the cancellation reason clearly
     report = scan.report_data or {}
